@@ -18,13 +18,13 @@ class veiculos(wx.Panel):
         screens = ['Pessoas', 'Veículos']
         self.choicebox = wx.Choice(self, choices=screens, size=(494, 25))
         self.cursor = Datacom.start_cursor(self.parent.mydb)
-        self.srchfld = wx.TextCtrl(self, size=(352, 23))
+        self.srchfld = wx.TextCtrl(self, size=(290, 23))
         self.init_Veiculo()
 
 
     def init_Veiculo(self):
 
-        srchtxt = wx.StaticText(self, label='Pesquisa: ', size=(56, 18))
+        srchtxt = wx.StaticText(self, label='Pesquisa por modelo: ', size=(118, 18))
         srchbt = wx.Button(self, label='Buscar', size=(75, 25))
         self.hbox.Add(srchtxt, 0, wx.ALIGN_CENTER)
         self.hbox.Add(self.srchfld, 0, wx.ALIGN_CENTER)

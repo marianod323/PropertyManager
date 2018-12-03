@@ -170,6 +170,15 @@ class editor_pessoa(wx.Dialog):
         if (not self.isIdValid(self.parent, idc) or idc == self.first_idc) and civil == 2:
             avisos(self.parent, 'O ID do cônjuge é inválido!').Show()
             valid = 0
+        elif name == 'NULL':
+            avisos(self.parent, 'Digite um nome!').Show()
+            valid = 0
+        elif phone == 'NULL':
+            avisos(self.parent, 'Digite um fone!').Show()
+            valid = 0
+        elif adress == 'NULL':
+            avisos(self.parent, 'Digite um endereço!').Show()
+            valid = 0
         elif civil != self.first_civil and civil == 2 and idc != self.first_idc:
             if self.isMarried(idc):
                 avisos(self.parent, 'Não é possível realizar este casamento\n'
@@ -238,6 +247,15 @@ class editor_pessoa(wx.Dialog):
         if not self.isIdValid(self.parent, idc) and civil == 2:
             avisos(self.parent, 'O ID do cônjuge é inválido!').Show()
             valid = 0
+        elif name == 'NULL':
+            avisos(self.parent, 'Digite um nome!').Show()
+            valid = 0
+        elif phone == 'NULL':
+            avisos(self.parent, 'Digite um fone!').Show()
+            valid = 0
+        elif adress == 'NULL':
+            avisos(self.parent, 'Digite um endereço!').Show()
+            valid = 0
         elif civil == 2 or idc != self.first_idc:
             if not self.isIdValid(self.parent, idc):
                 avisos(self.parent, 'O ID do cônjuge é inválido!').Show()
@@ -247,7 +265,8 @@ class editor_pessoa(wx.Dialog):
                                     '    pois o cônjuge já está casado!').Show()
                 valid = 0
             else:
-                self.getMarried(self.index, idc)
+                civil = 2
+
 
         if valid:
             command = 'INSERT INTO pessoa' \
@@ -256,6 +275,8 @@ class editor_pessoa(wx.Dialog):
 
             self.cursor = Datacom.start_cursor(self.parent.mydb)
             self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+            if civil == 2:
+                self.getMarried(self.getLastId(self.parent), idc)
             self.parent.panel2.onPressAllButton(self.parent.panel2)
             self.Destroy()
 
@@ -291,9 +312,10 @@ class editor_pessoa(wx.Dialog):
         else:
             self.parent.panel3.v_list.DeleteAllItems()
 
-            command = 'SELECT v.id_pessoa, v.num_chassi, v.modelo, v.ano FROM veiculo v ' \
-                      'JOIN pessoa p ON p.id_pessoa = v.id_pessoa ' \
-                      'WHERE v.id_pessoa = {}'.format(self.index)
+            command = 'SELECT v.* FROM vw_veiculos v ' \
+                      'JOIN pertence per ON v.num_chassi = per.num_chassi ' \
+                      'JOIN pessoa p ON per.id_pessoa = p.id_pessoa ' \
+                      'WHERE per.dono_atual = 1 AND p.id_pessoa = {}'.format(self.index)
 
             self.cursor = Datacom.start_cursor(self.parent.mydb)
             self.cursor = Datacom.cursor_execute(self.cursor, command)
@@ -315,9 +337,9 @@ class editor_pessoa(wx.Dialog):
 
     def ownVehicles(self):
 
-        command = 'SELECT v.num_chassi FROM veiculo v ' \
-                  'JOIN pessoa p ON v.id_pessoa = p.id_pessoa ' \
-                  'WHERE p.id_pessoa = {}'.format(self.index)
+        command = 'SELECT per.num_chassi FROM pertence per ' \
+                  'JOIN pessoa p ON per.id_pessoa = p.id_pessoa ' \
+                  'WHERE per.dono_atual = 1 AND p.id_pessoa = {}'.format(self.index)
 
         self.cursor = Datacom.start_cursor(self.parent.mydb)
         self.cursor = Datacom.cursor_execute(self.cursor, command)
@@ -365,6 +387,19 @@ class editor_pessoa(wx.Dialog):
 
 
     @staticmethod
+    def getLastId(parent):
+
+        command = 'SELECT id_pessoa ' \
+                  'FROM pessoa ORDER BY id_pessoa ' \
+                  'DESC LIMIT 1'
+
+        cursor = Datacom.start_cursor(parent.mydb)
+        cursor = Datacom.cursor_execute(cursor, command)
+
+        return cursor[0][0]
+
+
+    @staticmethod
     def isIdValid(parent, id_search):
 
         command = 'SELECT p.id_pessoa ' \
@@ -398,8 +433,9 @@ class editor_pessoa(wx.Dialog):
 class editor_veiculo(wx.Dialog):
 
 
-    def __init__(self, parent, index, selection):
-        super(editor_veiculo, self).__init__(parent=parent, size=(430, 226), title='Editor')
+    def __init__(self, parent, chassis, selection):
+
+        super(editor_veiculo, self).__init__(parent=parent, size=(430, 256), title='Editor')
         self.panel = wx.Panel(self)
         self.fld_id = wx.TextCtrl(self.panel, size=(74, 23))
         self.fld_name = wx.TextCtrl(self.panel, size=(186, 23), style=wx.TE_READONLY)
@@ -410,16 +446,17 @@ class editor_veiculo(wx.Dialog):
         self.fld_color = wx.TextCtrl(self.panel, size=(70, 23))
         self.fld_year = wx.TextCtrl(self.panel, size=(50, 23))
         self.fld_bdate = wx.TextCtrl(self.panel, size=(90, 23))
-        self.index = index
+        self.chassis = chassis
         self.parent = parent
         self.selection = selection
-        self.cursor = Datacom.start_cursor(self.parent.mydb)
-        self.first_civil = -1
-        self.first_idc = 'NULL'
+        self.owner_id = None
+        self.cursor = None
+        self.history = None
         self.init_Editor()
 
 
     def init_Editor(self):
+
         txt_id = wx.StaticText(self.panel, label='ID Dono: ', size=(66, 18))
         txt_name = wx.StaticText(self.panel, label='Nome: ', size=(36, 18))
         txt_chassis = wx.StaticText(self.panel, label='Chassi: ', size=(66, 18))
@@ -474,65 +511,88 @@ class editor_veiculo(wx.Dialog):
         hbox4.AddSpacer(4)
         hbox4.Add(self.fld_year, 0, wx.ALIGN_CENTER)
 
-        if self.selection == 0:
-            att_btn = wx.Button(self.panel, label='Atualizar veículo', size=(123, 25))
-            del_btn = wx.Button(self.panel, label='Deletar veículo', size=(123, 25))
-            shw_btn = wx.Button(self.panel, label='Exibir proprietário', size=(123, 25))
-            hbox5 = wx.BoxSizer(wx.HORIZONTAL)
-            hbox5.Add(att_btn, 0, wx.ALIGN_CENTER)
-            hbox5.AddSpacer(13)
-            hbox5.Add(del_btn, 0, wx.ALIGN_CENTER)
-            hbox5.AddSpacer(13)
-            hbox5.Add(shw_btn, 0, wx.ALIGN_CENTER)
-            att_btn.Bind(wx.EVT_BUTTON, self.onPressAttButton)
-            del_btn.Bind(wx.EVT_BUTTON, self.onPressDelButton)
-            shw_btn.Bind(wx.EVT_BUTTON, self.onPressShwButton)
-            self.fillSpaces()
-        else:
-            add_btn = wx.Button(self.panel, label='Adicionar veículo', size=(395, 25))
-            hbox5 = wx.BoxSizer(wx.HORIZONTAL)
-            hbox5.Add(add_btn, 0, wx.ALIGN_CENTER)
-            add_btn.Bind(wx.EVT_BUTTON, self.onPressAddButton)
-
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.AddSpacer(12)
         vbox.Add(hbox1, 0, wx.ALIGN_CENTER)
         vbox.AddSpacer(12)
-        vbox.Add(hbox2, 0, wx.ALIGN_CENTER)
+        vbox.Add(hbox4, 0, wx.ALIGN_CENTER)
         vbox.AddSpacer(12)
         vbox.Add(hbox3, 0, wx.ALIGN_CENTER)
         vbox.AddSpacer(12)
-        vbox.Add(hbox4, 0, wx.ALIGN_CENTER)
-        vbox.AddSpacer(12)
-        vbox.Add(hbox5, 0, wx.ALIGN_CENTER)
+        vbox.Add(hbox2, 0, wx.ALIGN_CENTER)
+
+        if self.selection == 0:
+            att_btn = wx.Button(self.panel, label='Atualizar veículo', size=(181, 25))
+            del_btn = wx.Button(self.panel, label='Deletar veículo', size=(181, 25))
+            shw_btn = wx.Button(self.panel, label='Exibir proprietário', size=(181, 25))
+            his_btn = wx.Button(self.panel, label='Exibir histórico de proprietários', size=(181, 25))
+            hbox5 = wx.BoxSizer(wx.HORIZONTAL)
+            hbox5.Add(att_btn, 0, wx.ALIGN_CENTER)
+            hbox5.AddSpacer(13)
+            hbox5.Add(del_btn, 0, wx.ALIGN_CENTER)
+            hbox6 = wx.BoxSizer(wx.HORIZONTAL)
+            hbox6.Add(shw_btn, 0, wx.ALIGN_CENTER)
+            hbox6.AddSpacer(13)
+            hbox6.Add(his_btn, 0, wx.ALIGN_CENTER)
+            vbox.AddSpacer(12)
+            vbox.Add(hbox5, 0, wx.ALIGN_CENTER)
+            vbox.AddSpacer(6)
+            vbox.Add(hbox6, 0, wx.ALIGN_CENTER)
+
+            att_btn.Bind(wx.EVT_BUTTON, self.onPressAttButton)
+            del_btn.Bind(wx.EVT_BUTTON, self.onPressDelButton)
+            shw_btn.Bind(wx.EVT_BUTTON, self.onPressShwButton)
+            his_btn.Bind(wx.EVT_BUTTON, self.onPressHisButton)
+            self.fillSpaces()
+        else:
+            add_btn = wx.Button(self.panel, label='Adicionar veículo', size=(395, 50))
+            hbox5 = wx.BoxSizer(wx.HORIZONTAL)
+            hbox5.Add(add_btn, 0, wx.ALIGN_CENTER)
+            add_btn.Bind(wx.EVT_BUTTON, self.onPressAddButton)
+            vbox.AddSpacer(18)
+            vbox.Add(hbox5, 0, wx.ALIGN_CENTER)
+
 
         self.Centre()
         self.panel.SetSizer(vbox)
 
 
     def fillSpaces(self):
-        command = 'SELECT v.*, p.nome FROM veiculo v ' \
-                  'JOIN pessoa p ON p.id_pessoa = v.id_pessoa ' \
-                  'WHERE v.num_chassi = \'{0}\''.format(self.index)
+
+        command = 'SELECT v.*, p.id_pessoa, p.nome, per.data_compra ' \
+                  'FROM veiculo v ' \
+                  'JOIN pertence per ON per.num_chassi = v.num_chassi ' \
+                  'JOIN pessoa p ON per.id_pessoa = p.id_pessoa ' \
+                  'WHERE v.num_chassi = \'{}\' AND per.dono_atual = 1'.format(self.chassis)
 
         self.cursor = Datacom.start_cursor(self.parent.mydb)
         self.cursor = Datacom.cursor_execute(self.cursor, command)
 
         self.fld_chassis.write(self.cursor[0][0])
-        self.fld_id.write(str(self.cursor[0][1]))
-        self.fld_bdate.write(self.cursor[0][2])
-        self.fld_price.write(str(self.cursor[0][3]))
-        self.fld_color.write(self.cursor[0][4])
-        self.fld_year.write(str(self.cursor[0][5]))
-        self.fld_model.write(self.cursor[0][6])
-        self.fld_brand.write(self.cursor[0][7])
-        self.fld_name.write(self.cursor[0][8])
+        self.fld_price.write(str(self.cursor[0][1]))
+        self.fld_color.write(self.cursor[0][2])
+        self.fld_year.write(str(self.cursor[0][3]))
+        self.fld_model.write(self.cursor[0][4])
+        self.fld_brand.write(self.cursor[0][5])
+        self.fld_id.write(str(self.cursor[0][6]))
+        self.fld_name.write(self.cursor[0][7])
+        self.fld_bdate.write(self.cursor[0][8])
+        self.owner_id = self.cursor[0][6]
 
 
     def onPressDelButton(self, event):
 
+        if self.history:
+            self.history.Destroy()
+
+        command = 'DELETE FROM pertence ' \
+                  'WHERE num_chassi = \'{}\''.format(self.chassis)
+
+        self.cursor = Datacom.start_cursor(self.parent.mydb)
+        self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+
         command = 'DELETE FROM veiculo ' \
-                  'WHERE num_chassi = \'{}\''.format(self.index)
+                  'WHERE num_chassi = \'{}\''.format(self.chassis)
 
         self.cursor = Datacom.start_cursor(self.parent.mydb)
         self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
@@ -556,17 +616,43 @@ class editor_veiculo(wx.Dialog):
             avisos(self.parent, 'Não é possível adicionar o carro\n'
                                 '    pois o ID do dono é inválido!').Show()
             valid = 0
-        elif self.isChassisOnDb(self.parent, chassis):
+        elif self.isChassisOnDb(self.parent, chassis) or chassis == 'NULL':
             avisos(self.parent, 'Não é possível adicionar o carro\n'
                                 'pois o número do chassi já está\n'
-                                '             cadastrado!').Show()
+                                '      cadastrado ou é inválido!').Show()
+            valid = 0
+        elif year == 'NULL':
+            avisos(self.parent, 'Digite um ano!').Show()
+            valid = 0
+        elif bdate == 'NULL':
+            avisos(self.parent, 'Digite uma data de compra!').Show()
+            valid = 0
+        elif price == 'NULL':
+            avisos(self.parent, 'Digite um preço!').Show()
+            valid = 0
+        elif model == 'NULL':
+            avisos(self.parent, 'Digite um modelo!').Show()
+            valid = 0
+        elif brand == 'NULL':
+            avisos(self.parent, 'Digite uma marca!').Show()
+            valid = 0
+        elif color == 'NULL':
+            avisos(self.parent, 'Digite uma cor!').Show()
             valid = 0
 
         if valid:
             command = 'INSERT INTO veiculo' \
-                      '(num_chassi, id_pessoa, data_da_compra, marca, modelo, cor, ano, preco) VALUES ' \
-                      '({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7})' \
-                      ''.format(chassis, id_person, bdate, brand, model, color, year, price)
+                      '(num_chassi, marca, modelo, cor, ano, preco) VALUES ' \
+                      '({0}, {1}, {2}, {3}, {4}, {5})' \
+                      ''.format(chassis, brand, model, color, year, price)
+
+            self.cursor = Datacom.start_cursor(self.parent.mydb)
+            self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+
+            command = 'INSERT INTO pertence' \
+                      '(num_chassi, id_pessoa, data_compra) VALUES ' \
+                      '({}, {}, {})' \
+                      ''.format(chassis, id_person, bdate)
 
             self.cursor = Datacom.start_cursor(self.parent.mydb)
             self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
@@ -575,13 +661,13 @@ class editor_veiculo(wx.Dialog):
 
 
     def onPressShwButton(self, event):
+
         self.parent.panel2.p_list.DeleteAllItems()
 
 
-        command = 'SELECT p.id_pessoa, p.nome, e.nome, p.fone FROM pessoa p ' \
-                  'JOIN veiculo v ON v.id_pessoa = p.id_pessoa ' \
-                  'JOIN estado_civil e ON e.id_estado_civil = p.estado_civil ' \
-                  'WHERE v.num_chassi = \'{}\''.format(self.index)
+        command = 'SELECT p.* FROM vw_pessoas p ' \
+                  'JOIN pertence per ON p.id_pessoa = per.id_pessoa ' \
+                  'WHERE per.dono_atual = 1 AND per.num_chassi = \'{}\''.format(self.chassis)
 
         self.cursor = Datacom.start_cursor(self.parent.mydb)
         self.cursor = Datacom.cursor_execute(self.cursor, command)
@@ -599,7 +685,10 @@ class editor_veiculo(wx.Dialog):
 
 
     def onPressAttButton(self, event):
-        chassis = editor_pessoa.nullOrNot(self.fld_chassis.GetLineText(0))
+
+        if self.history:
+            self.history.Destroy()
+
         bdate = editor_pessoa.nullOrNot(self.fld_bdate.GetLineText(0))
         brand = editor_pessoa.nullOrNot(self.fld_brand.GetLineText(0))
         model = editor_pessoa.nullOrNot(self.fld_model.GetLineText(0))
@@ -608,26 +697,76 @@ class editor_veiculo(wx.Dialog):
         id_person = editor_pessoa.setNull(self.fld_id.GetLineText(0))
         price = editor_pessoa.setNull(self.fld_price.GetLineText(0))
         valid = 1
+        new_owner = 0
 
         if not editor_pessoa.isIdValid(self.parent, id_person):
             avisos(self.parent, 'Não é possível atualizar o carro\n'
                                 '    pois o ID do dono é inválido!').Show()
             valid = 0
-
+        elif year == 'NULL':
+            avisos(self.parent, 'Digite um ano!').Show()
+            valid = 0
+        elif bdate == 'NULL':
+            avisos(self.parent, 'Digite uma data de compra!').Show()
+            valid = 0
+        elif price == 'NULL':
+            avisos(self.parent, 'Digite um preço!').Show()
+            valid = 0
+        elif model == 'NULL':
+            avisos(self.parent, 'Digite um modelo!').Show()
+            valid = 0
+        elif brand == 'NULL':
+            avisos(self.parent, 'Digite uma marca!').Show()
+            valid = 0
+        elif color == 'NULL':
+            avisos(self.parent, 'Digite uma cor!').Show()
+            valid = 0
+        elif id_person != str(self.owner_id):
+            new_owner = 1
+        
         if valid:
             command = 'UPDATE veiculo ' \
-                      'SET id_pessoa = {1}, data_da_compra = {2}, marca = {3}, modelo = {4}, ' \
-                      'cor = {5}, ano = {6}, preco = {7} ' \
-                      'WHERE num_chassi = {0}' \
-                      ''.format(chassis, id_person, bdate, brand, model, color, year, price)
+                      'SET marca = {1}, modelo = {2}, cor = {3}, ano = {4}, preco = {5} ' \
+                      'WHERE num_chassi = {0}'.format(self.chassis, brand, model, color, year, price)
 
             self.cursor = Datacom.start_cursor(self.parent.mydb)
             self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+            
+            if new_owner:
+                command = 'SELECT id_pertence FROM pertence ' \
+                          'WHERE num_chassi = \'{}\''.format(self.chassis)
+
+                self.cursor = Datacom.start_cursor(self.parent.mydb)
+                self.cursor = Datacom.cursor_execute(self.cursor, command)
+                
+                command = 'UPDATE pertence ' \
+                          'SET dono_atual = 0 ' \
+                          'WHERE num_chassi = \'{}\''.format(self.chassis)
+                
+                self.cursor = Datacom.start_cursor(self.parent.mydb)
+                self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+                
+                command = 'INSERT INTO pertence' \
+                          '(id_pessoa, num_chassi, data_compra, dono_atual) VALUES ' \
+                          '({0}, {1}, {2}, 1)'.format(id_person, self.chassis, bdate)
+
+                self.cursor = Datacom.start_cursor(self.parent.mydb)
+                self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+            
             self.parent.panel3.onPressSrchButton(self.parent.panel3)
             self.Destroy()
 
+
+    def onPressHisButton(self, event):
+
+        self.history = exibir_historico(self.parent, self.chassis)
+        self.history.Centre()
+        self.history.Show()
+    
+
     @staticmethod
     def isChassisOnDb(parent, num_chassi):
+
         command = 'SELECT v.num_chassi ' \
                   'FROM veiculo v ' \
                   'WHERE v.num_chassi = {}'.format(num_chassi)
@@ -638,3 +777,78 @@ class editor_veiculo(wx.Dialog):
         if cursor:
             return 1
         return 0
+    
+
+class exibir_historico(wx.Dialog):
+    
+    
+    def __init__(self, parent, chassis):
+
+        super(exibir_historico, self).__init__(parent=parent, size=(500, 226), title='Histórico')
+        self.panel = wx.Panel(self)
+        self.chassis = chassis
+        self.list = wx.ListCtrl(self.panel, wx.ID_ANY, style=wx.LC_REPORT, size=(-1, 125))
+        self.list.InsertColumn(0, 'ID Dono', width=60)
+        self.list.InsertColumn(1, 'Nome', width=160)
+        self.list.InsertColumn(2, 'Data da compra', width=100)
+        self.list.InsertColumn(3, 'Dono atual?', width=80)
+        self.list.InsertColumn(4, 'ID', width=60)
+        self.del_btn = wx.Button(self.panel, label='Deletar histórico de edição selecionado', size=(466, 25))
+        self.del_btn.Bind(wx.EVT_BUTTON, self.onPressDelButton)
+        self.vbox = wx.BoxSizer(wx.VERTICAL)
+        self.vbox.AddSpacer(15)
+        self.vbox.Add(self.list, 0, wx.ALIGN_CENTER)
+        self.vbox.AddSpacer(11)
+        self.vbox.Add(self.del_btn, 0, wx.ALIGN_CENTER)
+        self.panel.SetSizer(self.vbox)
+        self.parent = parent
+        self.cursor = None
+        self.fillSpaces()
+
+
+    def fillSpaces(self):
+
+        self.list.DeleteAllItems()
+
+        command = 'SELECT * FROM vw_hist_donos ' \
+                  'WHERE num_chassi = \'{}\''.format(self.chassis)
+
+        self.cursor = Datacom.start_cursor(self.parent.mydb)
+        self.cursor = Datacom.cursor_execute(self.cursor, command)
+
+        index = 0
+        for info in self.cursor:
+            self.list.InsertItem(index, str(info[0]))
+            self.list.SetItem(index, 1, info[1])
+            self.list.SetItem(index, 2, info[2])
+            if info[3]:
+                self.list.SetItem(index, 3, 'Sim')
+            else:
+                self.list.SetItem(index, 3, 'Não')
+            self.list.SetItem(index, 4, str(info[4]))
+            index += 1
+
+
+    def onPressDelButton(self, event):
+
+        if self.list.GetFocusedItem() != -1:
+            id_del = self.list.GetItemText(self.list.GetFocusedItem(), 4)
+
+            command = 'SELECT dono_atual FROM pertence ' \
+                      'WHERE id_pertence = {}'.format(id_del)
+
+            self.cursor = Datacom.start_cursor(self.parent.mydb)
+            self.cursor = Datacom.cursor_execute(self.cursor, command)
+
+            print(self.cursor[0][0])
+
+            if self.cursor[0][0]:
+                avisos(self.parent, 'Não é possível excluir o dado selecionado\n'
+                                    'pois esta pessoa é a atual dona do carro!').Show()
+            else:
+                command = 'DELETE FROM pertence ' \
+                          'WHERE id_pertence = {}'.format(id_del)
+
+                self.cursor = Datacom.start_cursor(self.parent.mydb)
+                self.cursor = Datacom.cursor_commit(self.parent.mydb, self.cursor, command)
+                self.fillSpaces()
